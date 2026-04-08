@@ -94,7 +94,7 @@ app.get("/access", async (req, res) => {
       <body>
         <h1>DROPBAGS 🔐</h1>
         <p>Scannez ce QR code pour accéder</p>
-        <img src="/qr?token=${token}" width="250" />
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${token}" />
         <p>Ou utilisez votre code PIN</p>
       </body>
     </html>
