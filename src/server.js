@@ -73,3 +73,7 @@ app.use("/payment", paymentRoutes);
  * (ex : ouverture de porte, gestion interne)
  */
 app.use("/api/access", authMiddleware, accessRoutes);
+
+app.get("/", (req, res) => {
+  res.send("Dropbags backend is running 🚀");
+});
