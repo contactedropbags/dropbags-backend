@@ -6,6 +6,9 @@ exports.createBooking = async (req, res) => {
 
     console.log("REQ BODY:", req.body);
 
+    console.log("EMAIL:", email);
+    console.log("PHONE:", phone);  
+
     const { email, phone, durationHours = 3, arrivalDate } = req.body;
 
     if (!email) {
