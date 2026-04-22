@@ -4,7 +4,14 @@ const { saveBooking } = require("../services/bookingService");
 exports.createBooking = async (req, res) => {
   try {
 
-    const { email, phone, arrivalDate } = req.body;
+    const { 
+      email, 
+      phone, 
+      arrivalDate,
+      arrivalTime,
+      firstName,
+      lastName
+   } = req.body;
 
     console.log("REQ BODY:", req.body);
 
@@ -25,12 +32,15 @@ exports.createBooking = async (req, res) => {
 
     const arrivalWindowEnd = expiresAt;
 
-    const booking = await saveBooking({
+    const bookingData = await saveBooking({
       qrToken,
       email,
       locker_number: null,
       phone,
-      arrivalTime: arrivalDate,
+      first_name: firstName,
+      last_name: lastName,
+      arrival_date: arrivalDate,
+      arrival_time: arrivalTime,
       arrivalWindowEnd,
       expiresAt,
       status: "reserved"
