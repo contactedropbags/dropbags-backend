@@ -75,7 +75,7 @@ const qrUrl = publicData.publicUrl;
   try {
     console.log("QR CODE ===>", qrCode.substring(0, 50));
 
-await Promise.all([
+await Promise.allSettled([
   sendEmail({
     to: data.email,
     pin,
@@ -85,7 +85,7 @@ await Promise.all([
   sendSMS({
     phone: data.phone,
     pin,
-    qrUrl: `https://nonacquiescent-adelina-experimentally.ngrok-free.dev/access?token=${qrToken}`
+    qrUrl
   })
 ]);
 
