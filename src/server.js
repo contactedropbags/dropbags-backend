@@ -3,6 +3,7 @@ require("dotenv").config();
 
 // Import des dépendances
 const express = require("express");
+const cors =require("cors");
 
 // Import des routes
 const accessRoutes = require("./routes/accessRoutes");
@@ -15,6 +16,8 @@ const authMiddleware = require("./middleware/auth");
 
 // Initialisation de l'app
 const app = express();
+
+app.use(cors());
 
 /**
  * 🔥 IMPORTANT (Render / Production)
