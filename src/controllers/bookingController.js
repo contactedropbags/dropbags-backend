@@ -47,8 +47,15 @@ exports.createBooking = async (req, res) => {
     });
 
     return res.status(201).json({
-      qrToken
-    });
+    success: true,
+    booking: {
+    id: bookingData.id,
+    pin: bookingData.pin,
+    qrCode: bookingData.qr_url, // ou qrCode selon ton service
+    locker: bookingData.locker_number,
+    email: bookingData.email
+    }
+   });
 
   } catch (error) {
 
