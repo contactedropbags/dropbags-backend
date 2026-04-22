@@ -4,14 +4,14 @@ const { saveBooking } = require("../services/bookingService");
 exports.createBooking = async (req, res) => {
   try {
 
+    const { email, phone, arrivalDate } = req.body;
+
     console.log("REQ BODY:", req.body);
 
     console.log("EMAIL:", email);
     console.log("PHONE:", phone);  
 
-    const { email, phone, durationHours = 3, arrivalDate } = req.body;
-
-    if (!email) {
+  if (!email) {
       return res.status(400).json({ error: "Email required" });
     }
 
@@ -20,7 +20,7 @@ exports.createBooking = async (req, res) => {
     const arrival = arrivalDate ? new Date(arrivalDate) : new Date();
 
     const expiresAt = new Date(
-      arrival.getTime() + durationHours * 60 * 60 * 1000
+      arrival.getTime() + 24 * 60 * 60 * 1000
     );
 
     const arrivalWindowEnd = expiresAt;
