@@ -4,6 +4,8 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 async function createTestPayment(req, res) {
   try {
 
+    console.log("🔥 PAYMENT API CALLED");
+    
     const paymentIntent = await stripe.paymentIntents.create({
       amount: 1500,
       currency: "eur",
