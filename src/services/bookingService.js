@@ -43,33 +43,7 @@ console.log("📱 PHONE DATA:", data.phone);
 
   // 3.2 Génération QR code (image pour email)
   const qrCode = await generateQRCode(qrToken);
-
-  // ==========================
-// UPLOAD QR SUR SUPABASE
-// ==========================
-
-const fileName = `qr-${qrToken}.png`;
-
-const base64Data = qrCode.replace(/^data:image\/png;base64,/, "");
-const buffer = Buffer.from(base64Data, "base64");
-
-const { error: uploadError } = await supabase.storage
-  .from("qrcodes")
-  .upload(fileName, buffer, {
-    contentType: "image/png",
-    upsert: true
-  });
-
-if (uploadError) {
-  console.error("UPLOAD ERROR:", uploadError);
-}
-
-// URL publique
-const { data: publicData } = supabase.storage
-  .from("qrcodes")
-  .getPublicUrl(fileName);
-
-const qrUrl = publicData.publicUrl;
+  const accessUrl = `https://dropbags.fr/access?token=${qrToken}`;
 
   // 4. 📩 Envoi EMAIL + SMS (non bloquant mais sécurisé)
   try {
@@ -79,13 +53,14 @@ await Promise.allSettled([
   sendEmail({
     to: data.email,
     pin,
-    qrUrl
+    accessUrl,
+    qrCode
   }),
 
   sendSMS({
     phone: data.phone,
     pin,
-    qrUrl
+    accessUrl
   })
 ]);
 
