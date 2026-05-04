@@ -34,7 +34,7 @@ router.post(
       console.log("✅ Paiement validé");
 
       const paymentIntent = event.data.object;
-      const bookingIdFromMetadata = paymentIntent.metadata?.booking_id;
+      const bookingIdFromMetadata = paymentIntent.metadata?.bookingId;
 
       try {
         let booking = null;
