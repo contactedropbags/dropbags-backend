@@ -42,6 +42,7 @@ app.get("/", (req, res) => {
  * ⚠️ DOIT être AVANT express.json()
  * Stripe a besoin du body brut
  */
+app.use("/webhooks/stripe", express.raw({ type: "application/json" }), stripeWebhook);
 app.use("/webhook", stripeWebhook);
 
 /**
