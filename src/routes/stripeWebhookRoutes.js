@@ -47,8 +47,8 @@ router.post(
         }
 
         if (!booking) {
-          console.error("❌ No booking found for payment intent:", paymentIntent.id);
-          return res.json({ received: true });
+          console.error("CRITICAL: No booking found, stopping webhook", paymentIntent.id);
+          return res.status(400).json({ error: "Booking not found" });
         }
 
         if (booking.status !== "pending") {
