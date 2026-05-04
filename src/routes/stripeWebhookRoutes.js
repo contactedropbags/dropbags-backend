@@ -8,10 +8,10 @@ const bookingService = require("../services/bookingService");
 const router = express.Router();
 
 router.post(
-  "/webhooks/stripe",
-  express.raw({ type: "application/json" }),
+  "/",
   async (req, res) => {
-    console.log("📩 Stripe webhook received");
+    console.log("✅ Stripe webhook received");
+    console.log("Webhook received");
     let processingFailed = false;
 
     const sig = req.headers["stripe-signature"];
@@ -31,10 +31,10 @@ router.post(
 
     // 🎯 Gestion du paiement
     if (event.type === "payment_intent.succeeded") {
-      console.log("✅ Paiement validé");
+      console.log("Payment succeeded");
 
       const paymentIntent = event.data.object;
-      const bookingIdFromMetadata = paymentIntent.metadata?.bookingId;
+      const bookingIdFromMetadata = paymentIntent.metadata?.bookingId || paymentIntent.metadata?.booking_id;
 
       try {
         let booking = null;
@@ -51,8 +51,10 @@ router.post(
           return res.status(400).json({ error: "Booking not found" });
         }
 
+        console.log("Booking found");
+
         if (booking.status !== "pending") {
-          console.log("ℹ️ Booking already processed, skipping:", booking.id, booking.status);
+          console.log("Booking already processed");
           return res.json({ received: true });
         }
 
