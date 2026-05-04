@@ -21,12 +21,15 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 /**
  * 📧 Envoi email avec QR + PIN
  */
-async function sendEmail({ to, pin, qrToken }) {
+async function sendEmail({ to, pin, qrUrl }) {
   // 🔍 Debug utile
   console.log("EMAIL SEND →", to, pin);
 
   if (!to) {
     throw new Error("Email manquant");
+  }
+  if (!qrUrl) {
+    throw new Error("QR URL manquante");
   }
 
   /**
@@ -42,7 +45,7 @@ async function sendEmail({ to, pin, qrToken }) {
       </p>
 
       <div style="margin:20px 0;">
-        <img src="https://nonacquiescent-adelina-experimentally.ngrok-free.dev/qr?token=${qrToken}" width="200" height="200" />
+        <img src="${qrUrl}" width="200" height="200" />
       </div>
 
       <h3 style="margin-top:20px;">

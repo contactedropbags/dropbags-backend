@@ -1,6 +1,7 @@
 const express = require("express");
 
 const { createPaymentIntent } = require("../services/stripeService");
+const { findBookingById, linkPaymentIntentToBooking } = require("../services/bookingService");
 
 const { createTestPayment } = require("../controllers/paymentController");
 
@@ -15,9 +16,22 @@ router.post("/intent", async (req, res) => {
 
   try {
 
-    const { email } = req.body;
+    const { email, bookingId } = req.body;
 
-    const paymentIntent = await createPaymentIntent(email);
+    if (!bookingId) {
+      return res.status(400).json({ error: "bookingId is required" });
+    }
+
+    const booking = await findBookingById(bookingId);
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+    if (booking.status && booking.status !== "pending") {
+      return res.status(409).json({ error: "Booking is not payable" });
+    }
+
+    const paymentIntent = await createPaymentIntent(email || booking.email, bookingId);
+    await linkPaymentIntentToBooking(bookingId, paymentIntent.id);
 
     res.json({
       clientSecret: paymentIntent.client_secret,

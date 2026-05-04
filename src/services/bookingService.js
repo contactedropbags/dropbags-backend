@@ -8,26 +8,20 @@ const PRICE_PER_HOUR = 3;
 const MAX_PRICE = 15;
 const LOCKER_TIMEOUT = 5 * 60 * 1000;
 
-const { generateQrToken, generateQRCode } = require("./qrService");
+const { generateQrToken, uploadQRCodeImage } = require("./qrService");
 const { generatePin } = require("./pinService");
 const { sendEmail } = require("./emailService");
 const { sendSMS } = require("./smsService");
 
 // CREATE BOOKING
 async function saveBooking(data) {
-
-  // 1. Génération PIN + TOKEN
   const qrToken = generateQrToken();
-  const pin = generatePin();
-
-  // 
-console.log("📱 PHONE DATA:", data.phone);
 
   const bookingData = {
     ...data,
     locker_number: null,
     qrToken,
-    pin
+    status: data.status || "pending"
   };
 
   // 2. Sauvegarde en base
@@ -39,34 +33,6 @@ console.log("📱 PHONE DATA:", data.phone);
 
   if (error) {
     throw new Error(error.message);
-  }
-
-  // 3.2 Génération QR code (image pour email)
-  const qrCode = await generateQRCode(qrToken);
-  const accessUrl = `https://dropbags.fr/access?token=${qrToken}`;
-
-  // 4. 📩 Envoi EMAIL + SMS (non bloquant mais sécurisé)
-  try {
-    console.log("QR CODE ===>", qrCode.substring(0, 50));
-
-await Promise.allSettled([
-  sendEmail({
-    to: data.email,
-    pin,
-    accessUrl,
-    qrCode
-  }),
-
-  sendSMS({
-    phone: data.phone,
-    pin,
-    accessUrl
-  })
-]);
-
-  } catch (err) {
-    console.error("Erreur envoi email/SMS:", err);
-    // 👉 IMPORTANT : on bloque pas le booking
   }
 
   return booking;
@@ -93,6 +59,123 @@ async function findBookingByToken(token) {
   return data;
 }
 
+async function findBookingByPin(pin) {
+  const { data, error } = await supabase
+    .from("bookings")
+    .select("*")
+    .eq("pin", pin)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Supabase error:", error);
+    return null;
+  }
+
+  return data;
+}
+
+async function findBookingById(id) {
+  const { data, error } = await supabase
+    .from("bookings")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data;
+}
+
+async function findBookingByPaymentIntentId(paymentIntentId) {
+  const { data, error } = await supabase
+    .from("bookings")
+    .select("*")
+    .eq("payment_intent_id", paymentIntentId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data;
+}
+
+async function linkPaymentIntentToBooking(bookingId, paymentIntentId) {
+  const { data, error } = await supabase
+    .from("bookings")
+    .update({ payment_intent_id: paymentIntentId })
+    .eq("id", bookingId)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data;
+}
+
+async function markBookingPaidAndSendAccess(booking, paymentIntentId) {
+  if (!booking) {
+    throw new Error("Booking not found");
+  }
+
+  if (booking.status === "paid" || booking.status === "active") {
+    return { booking, skipped: true, reason: "already_processed" };
+  }
+
+  const pin = booking.pin || generatePin();
+  const qrUrl = booking.qr_url || await uploadQRCodeImage(booking.qrToken);
+
+  const { data: accessPreparedBooking, error: prepareError } = await supabase
+    .from("bookings")
+    .update({
+      pin,
+      qr_url: qrUrl,
+      payment_intent_id: paymentIntentId
+    })
+    .eq("id", booking.id)
+    .select()
+    .single();
+
+  if (prepareError) {
+    throw new Error(prepareError.message);
+  }
+
+  const notificationResults = await Promise.allSettled([
+    sendEmail({
+      to: accessPreparedBooking.email,
+      pin,
+      qrUrl
+    }),
+    sendSMS({
+      phone: accessPreparedBooking.phone,
+      pin,
+      qrUrl
+    })
+  ]);
+
+  const failedNotifications = notificationResults.filter((result) => result.status === "rejected");
+  if (failedNotifications.length > 0) {
+    throw new Error("Notification delivery failed");
+  }
+
+  const { data: updatedBooking, error: paidError } = await supabase
+    .from("bookings")
+    .update({ status: "paid" })
+    .eq("id", booking.id)
+    .select()
+    .single();
+
+  if (paidError) {
+    throw new Error(paidError.message);
+  }
+
+  return { booking: updatedBooking, notifications: notificationResults };
+}
+
 
 // VERIFY PIN
 async function verifyBookingByPin(pin) {
@@ -107,7 +190,8 @@ async function verifyBookingByPin(pin) {
     return { valid: false, reason: "NOT_FOUND" };
   }
 
-  if (new Date() > new Date(booking.expires_at)) {
+  const bookingExpiry = booking.expiresAt || booking.expires_at;
+  if (bookingExpiry && new Date() > new Date(bookingExpiry)) {
     return { valid: false, reason: "EXPIRED" };
   }
 
@@ -178,7 +262,7 @@ async function closeLocker(booking) {
   const price = Math.min(hours * PRICE_PER_HOUR, MAX_PRICE);
   const amountInCents = price * 100;
 
-  await capturePayment(booking.paymentIntentId, amountInCents);
+  await capturePayment(booking.payment_intent_id || booking.paymentIntentId, amountInCents);
 
   booking.status = "closed";
   booking.checkOutTime = checkOutTime;
@@ -235,6 +319,11 @@ async function pickupBooking(bookingId) {
 module.exports = {
   saveBooking,
   findBookingByToken,
+  findBookingByPin,
+  findBookingById,
+  findBookingByPaymentIntentId,
+  linkPaymentIntentToBooking,
+  markBookingPaidAndSendAccess,
   verifyBookingByPin,
   scanBooking,
   closeLocker,

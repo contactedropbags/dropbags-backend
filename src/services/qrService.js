@@ -13,6 +13,7 @@
 
 const QRCode = require("qrcode");
 const crypto = require("crypto");
+const supabase = require("../config/supabase");
 
 /**
  * 🔐 Génère un token sécurisé unique
@@ -45,10 +46,48 @@ async function generateQRCode(token) {
   return qr;
 }
 
+async function uploadQRCodeImage(token) {
+  const bucket = process.env.SUPABASE_QR_BUCKET;
+  if (!bucket) {
+    throw new Error("SUPABASE_QR_BUCKET is not configured");
+  }
+
+  const filePath = `qrcodes/${token}.png`;
+  const url = `https://dropbags.fr/access?token=${token}`;
+  const qrBuffer = await QRCode.toBuffer(url, {
+    type: "png",
+    width: 300,
+    errorCorrectionLevel: "H"
+  });
+
+  const { error: uploadError } = await supabase.storage
+    .from(bucket)
+    .upload(filePath, qrBuffer, {
+      contentType: "image/png",
+      cacheControl: "3600",
+      upsert: true
+    });
+
+  if (uploadError) {
+    throw new Error(`QR upload failed: ${uploadError.message}`);
+  }
+
+  const { data } = supabase.storage
+    .from(bucket)
+    .getPublicUrl(filePath);
+
+  if (!data || !data.publicUrl) {
+    throw new Error("Unable to resolve public QR URL");
+  }
+
+  return data.publicUrl;
+}
+
 /**
  * 📤 Export des fonctions
  */
 module.exports = {
   generateQrToken,
-  generateQRCode
+  generateQRCode,
+  uploadQRCodeImage
 };

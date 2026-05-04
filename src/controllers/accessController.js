@@ -37,7 +37,8 @@ const generateAccess = async (req, res) => {
 
     const now = new Date();
 
-    if (new Date(booking.expiresAt) < now) {
+    const bookingExpiry = booking.expiresAt || booking.expires_at;
+    if (bookingExpiry && new Date(bookingExpiry) < now) {
       return res.status(403).json({
         error: "BOOKING_EXPIRED"
       });

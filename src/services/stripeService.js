@@ -25,19 +25,25 @@ maximum 15€
 
 
 // Création de l'empreinte bancaire
-async function createPaymentIntent(email) {
+async function createPaymentIntent(email, bookingId) {
 
   try {
 
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: 1500, // 15€ maximum
-      currency: "eur",
-      capture_method: "manual",
-      receipt_email: email,
-      metadata: {
-        service: "dropbags"
+    const paymentIntent = await stripe.paymentIntents.create(
+      {
+        amount: 1500, // 15€ maximum
+        currency: "eur",
+        capture_method: "manual",
+        receipt_email: email,
+        metadata: {
+          service: "dropbags",
+          booking_id: bookingId
+        }
+      },
+      {
+        idempotencyKey: `dropbags_booking_${bookingId}_intent`
       }
-    });
+    );
 
     return paymentIntent;
 

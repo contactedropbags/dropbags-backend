@@ -1,4 +1,3 @@
-const { generateQrToken } = require("../services/qrService");
 const { saveBooking } = require("../services/bookingService");
 
 exports.createBooking = async (req, res) => {
@@ -22,8 +21,6 @@ exports.createBooking = async (req, res) => {
       return res.status(400).json({ error: "Email required" });
     }
 
-    const qrToken = generateQrToken();
-
     const arrival = arrivalDate ? new Date(arrivalDate) : new Date();
 
     const expiresAt = new Date(
@@ -33,7 +30,6 @@ exports.createBooking = async (req, res) => {
     const arrivalWindowEnd = expiresAt;
 
     const bookingData = await saveBooking({
-      qrToken,
       email,
       locker_number: null,
       phone,
@@ -43,15 +39,14 @@ exports.createBooking = async (req, res) => {
       arrival_time: arrivalTime,
       arrivalWindowEnd,
       expiresAt,
-      status: "reserved"
+      status: "pending"
     });
 
     return res.status(201).json({
     success: true,
     booking: {
     id: bookingData.id,
-    pin: bookingData.pin,
-    qrCode: bookingData.qr_url, // ou qrCode selon ton service
+    status: bookingData.status,
     locker: bookingData.locker_number,
     email: bookingData.email
     }

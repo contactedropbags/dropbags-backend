@@ -4,8 +4,6 @@ const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const bookingService = require("../services/bookingService");
-const pinService = require("../services/pinService");
-const lockerService = require("../services/lockerService");
 
 const router = express.Router();
 
@@ -14,6 +12,7 @@ router.post(
   express.raw({ type: "application/json" }),
   async (req, res) => {
     console.log("📩 Stripe webhook received");
+    let processingFailed = false;
 
     const sig = req.headers["stripe-signature"];
     let event;
@@ -35,37 +34,49 @@ router.post(
       console.log("✅ Paiement validé");
 
       const paymentIntent = event.data.object;
-      const email = paymentIntent.receipt_email || "test@dropbags.com";
+      const bookingIdFromMetadata = paymentIntent.metadata?.booking_id;
 
       try {
-        // 🔐 1. assigner locker (simulation pour l’instant)
-        const locker = await lockerService.assignLocker();
+        let booking = null;
+        if (bookingIdFromMetadata) {
+          booking = await bookingService.findBookingById(bookingIdFromMetadata);
+        }
 
-        // 🔢 2. générer PIN sécurisé
-        const pin = pinService.generatePin();
+        if (!booking) {
+          booking = await bookingService.findBookingByPaymentIntentId(paymentIntent.id);
+        }
 
-        // 📱 3. générer QR temporaire
-        const qr = `QR-${Date.now()}`;
+        if (!booking) {
+          console.error("❌ No booking found for payment intent:", paymentIntent.id);
+          return res.json({ received: true });
+        }
 
-        // 💾 4. créer réservation en base (Supabase)
-        const booking = await bookingService.saveBooking({
-          payment_intent_id: paymentIntent.id,
-          locker_number: locker,
-          pin,
-          qrToken: qr,
-          email,
-          status: "active",
-        });
+        if (booking.status !== "pending") {
+          console.log("ℹ️ Booking already processed, skipping:", booking.id, booking.status);
+          return res.json({ received: true });
+        }
 
-        console.log("🎯 Booking créé:");
-        console.log(booking);
+        const result = await bookingService.markBookingPaidAndSendAccess(
+          booking,
+          paymentIntent.id
+        );
+
+        if (result.skipped) {
+          console.log("ℹ️ Webhook already processed for booking:", booking.id);
+        } else {
+          console.log("🎯 Booking paid and access sent:", result.booking.id);
+        }
 
       } catch (error) {
-        console.error("❌ Erreur création booking:", error);
+        console.error("❌ Erreur traitement booking webhook:", error);
+        processingFailed = true;
       }
     }
 
     // ✅ réponse obligatoire à Stripe
+    if (processingFailed) {
+      return res.status(500).json({ received: false });
+    }
     res.json({ received: true });
   }
 );

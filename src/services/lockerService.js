@@ -32,7 +32,7 @@ function assignLocker() {
 function releaseLocker(lockerNumber) {
   const locker = lockers.find(l => l.number === lockerNumber);
 
-  if (locker) {
+  if (!locker) {
     return null;
   }
   locker.occupied = false;
