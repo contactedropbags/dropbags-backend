@@ -37,7 +37,8 @@ async function createPaymentIntent(email, bookingId) {
         receipt_email: email,
         metadata: {
           service: "dropbags",
-          booking_id: bookingId
+          booking_id: bookingId,
+          bookingId: String(bookingId)
         }
       },
       {

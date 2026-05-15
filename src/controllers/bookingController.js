@@ -1,6 +1,11 @@
 const { saveBooking } = require("../services/bookingService");
 
 exports.createBooking = async (req, res) => {
+  console.log("[DIAG] createBooking called", {
+    email: req.body?.email,
+    phone: req.body?.phone
+  });
+
   try {
 
     const { 

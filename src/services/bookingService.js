@@ -15,6 +15,11 @@ const { sendSMS } = require("./smsService");
 
 // CREATE BOOKING
 async function saveBooking(data) {
+  console.log("[DIAG] saveBooking called", {
+    email: data?.email,
+    status: data?.status || "pending"
+  });
+
   const qrToken = generateQrToken();
 
   const bookingData = {
@@ -137,11 +142,22 @@ async function markBookingPaidAndSendAccess(booking, paymentIntentId) {
       payment_intent_id: paymentIntentId
     })
     .eq("id", booking.id)
+    .eq("status", "pending")
     .select()
     .single();
 
-  if (prepareError) {
-    throw new Error(prepareError.message);
+  if (prepareError || !accessPreparedBooking) {
+    const { data: current } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("id", booking.id)
+      .maybeSingle();
+
+    if (current && current.status !== "pending") {
+      return { booking: current, skipped: true, reason: "already_processed" };
+    }
+
+    throw new Error(prepareError?.message || "Booking update failed");
   }
 
   const notificationResults = await Promise.allSettled([

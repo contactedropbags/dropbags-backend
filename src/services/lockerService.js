@@ -8,6 +8,7 @@ let lockers = Array.from({ length: TOTAL_LOCKERS }, (_, i) => ({
 }));
 
 function assignLocker() {
+  console.log("[DIAG] assignLocker called");
 
   if (assigning) {
     return null
