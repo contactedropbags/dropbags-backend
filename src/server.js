@@ -42,7 +42,17 @@ app.get("/", (req, res) => {
  * ⚠️ DOIT être AVANT express.json()
  * Stripe a besoin du body brut
  */
-app.use("/webhooks/stripe", express.raw({ type: "application/json" }), stripeWebhook);
+const stripeWebhookRawParser = express.raw({
+  type: (req) => {
+    const contentType = req.headers["content-type"] || "";
+    return contentType.includes("application/json");
+  }
+});
+
+// Route officielle Stripe Dashboard
+app.use("/webhooks/stripe", stripeWebhookRawParser, stripeWebhook);
+// Alias rétro-compat (ancienne config Stripe /webhook)
+app.use("/webhook", stripeWebhookRawParser, stripeWebhook);
 
 /**
  * ================================
@@ -121,4 +131,6 @@ app.use((req, res) => {
  */
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log("Stripe webhook endpoints: POST /webhooks/stripe | POST /webhook");
+  console.log("STRIPE_WEBHOOK_SECRET loaded:", Boolean(process.env.STRIPE_WEBHOOK_SECRET));
 });
