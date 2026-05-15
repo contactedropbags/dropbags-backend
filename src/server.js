@@ -10,6 +10,7 @@ const accessRoutes = require("./routes/accessRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const stripeWebhook = require("./routes/stripeWebhookRoutes");
+const accessControlRoutes = require("./routes/accessControlRoutes");
 
 // Middleware de sécurité (API key)
 const authMiddleware = require("./middleware/auth");
@@ -69,6 +70,14 @@ app.use(express.json());
  */
 app.use("/api", bookingRoutes);
 app.use("/payment", paymentRoutes);
+
+/**
+ * ================================
+ * 🚪 ACCESS CONTROL (porte / Akuvox)
+ * ================================
+ * Terminal physique → validation QR/PIN + ouverture relais
+ */
+app.use("/access", accessControlRoutes);
 
 /**
  * ================================
@@ -132,5 +141,7 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log("Stripe webhook endpoints: POST /webhooks/stripe | POST /webhook");
+  console.log("Access control endpoint: POST /access/validate");
   console.log("STRIPE_WEBHOOK_SECRET loaded:", Boolean(process.env.STRIPE_WEBHOOK_SECRET));
+  console.log("ACCESS_CONTROL_PROVIDER:", process.env.ACCESS_CONTROL_PROVIDER || "akuvox");
 });
