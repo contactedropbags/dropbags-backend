@@ -15,6 +15,10 @@ Stripe bloque 15€ mais ne débite rien
 router.post("/intent", async (req, res) => {
 
   try {
+    console.log("[DIAG] PAYMENT INTENT API called", {
+      bookingId: req.body?.bookingId,
+      email: req.body?.email
+    });
 
     const { email, bookingId } = req.body;
 

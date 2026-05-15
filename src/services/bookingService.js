@@ -127,12 +127,13 @@ async function markBookingPaidAndSendAccess(booking, paymentIntentId) {
     throw new Error("Booking not found");
   }
 
-  if (booking.status === "paid" || booking.status === "active") {
+  if (booking.status === "authorized" || booking.status === "paid" || booking.status === "active") {
     return { booking, skipped: true, reason: "already_processed" };
   }
 
   const pin = booking.pin || generatePin();
   const qrUrl = booking.qr_url || await uploadQRCodeImage(booking.qrToken);
+  console.log("QR generated", { bookingId: booking.id, qrUrl });
 
   const { data: accessPreparedBooking, error: prepareError } = await supabase
     .from("bookings")
@@ -178,9 +179,13 @@ async function markBookingPaidAndSendAccess(booking, paymentIntentId) {
     throw new Error("Notification delivery failed");
   }
 
+  if (notificationResults[1]?.status === "fulfilled") {
+    console.log("SMS sent", { bookingId: booking.id, phone: accessPreparedBooking.phone });
+  }
+
   const { data: updatedBooking, error: paidError } = await supabase
     .from("bookings")
-    .update({ status: "paid" })
+    .update({ status: "authorized" })
     .eq("id", booking.id)
     .select()
     .single();
@@ -189,7 +194,45 @@ async function markBookingPaidAndSendAccess(booking, paymentIntentId) {
     throw new Error(paidError.message);
   }
 
+  console.log("booking updated", { bookingId: updatedBooking.id, status: updatedBooking.status });
+
   return { booking: updatedBooking, notifications: notificationResults };
+}
+
+async function markBookingCaptured(booking) {
+  if (!booking) {
+    throw new Error("Booking not found");
+  }
+
+  if (booking.status === "paid") {
+    return { booking, skipped: true, reason: "already_paid" };
+  }
+
+  const { data: updatedBooking, error } = await supabase
+    .from("bookings")
+    .update({ status: "paid" })
+    .eq("id", booking.id)
+    .in("status", ["authorized", "active", "closed"])
+    .select()
+    .single();
+
+  if (error || !updatedBooking) {
+    const { data: current } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("id", booking.id)
+      .maybeSingle();
+
+    if (current?.status === "paid") {
+      return { booking: current, skipped: true, reason: "already_paid" };
+    }
+
+    throw new Error(error?.message || "Booking capture update failed");
+  }
+
+  console.log("booking updated", { bookingId: updatedBooking.id, status: updatedBooking.status });
+
+  return { booking: updatedBooking };
 }
 
 
@@ -340,6 +383,7 @@ module.exports = {
   findBookingByPaymentIntentId,
   linkPaymentIntentToBooking,
   markBookingPaidAndSendAccess,
+  markBookingCaptured,
   verifyBookingByPin,
   scanBooking,
   closeLocker,

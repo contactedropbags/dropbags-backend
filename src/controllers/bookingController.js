@@ -3,7 +3,10 @@ const { saveBooking } = require("../services/bookingService");
 exports.createBooking = async (req, res) => {
   console.log("[DIAG] createBooking called", {
     email: req.body?.email,
-    phone: req.body?.phone
+    phone: req.body?.phone,
+    bookingId: req.body?.bookingId,
+    paymentIntentId: req.body?.paymentIntentId,
+    stack: new Error().stack?.split("\n").slice(1, 4).join(" | ")
   });
 
   try {
