@@ -161,27 +161,42 @@ async function markBookingPaidAndSendAccess(booking, paymentIntentId) {
     throw new Error(prepareError?.message || "Booking update failed");
   }
 
-  const notificationResults = await Promise.allSettled([
+  const emailResult = await Promise.allSettled([
     sendEmail({
       to: accessPreparedBooking.email,
-      pin,
-      qrUrl
-    }),
-    sendSMS({
-      phone: accessPreparedBooking.phone,
       pin,
       qrUrl
     })
   ]);
 
-  const failedNotifications = notificationResults.filter((result) => result.status === "rejected");
-  if (failedNotifications.length > 0) {
-    throw new Error("Notification delivery failed");
+  if (emailResult[0].status === "rejected") {
+    console.error("Email delivery failed:", emailResult[0].reason);
+    throw new Error("Email delivery failed");
   }
 
-  if (notificationResults[1]?.status === "fulfilled") {
-    console.log("SMS sent", { bookingId: booking.id, phone: accessPreparedBooking.phone });
+  let smsResult = { status: "skipped", reason: "no_phone" };
+  if (accessPreparedBooking.phone) {
+    try {
+      await sendSMS({
+        phone: accessPreparedBooking.phone,
+        pin,
+        qrUrl
+      });
+      smsResult = { status: "fulfilled" };
+      console.log("SMS sent", {
+        bookingId: booking.id,
+        phone: accessPreparedBooking.phone
+      });
+    } catch (err) {
+      console.error(
+        "SMS ERROR FULL:",
+        err.response?.data || err.response?.body || err.message || err
+      );
+      smsResult = { status: "rejected", reason: err };
+    }
   }
+
+  const notificationResults = [emailResult[0], smsResult];
 
   const { data: updatedBooking, error: paidError } = await supabase
     .from("bookings")
