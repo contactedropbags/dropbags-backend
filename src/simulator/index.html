@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DropBags — Simulateur terminaux</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root {
+      --bg: #0a0a0a; --panel: #141414; --border: #2a2a2a; --text: #f5f5f5;
+      --muted: #888; --green: #22c55e; --red: #ef4444; --yellow: #eab308; --blue: #3b82f6;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+    .badge { background: var(--yellow); color: #000; font-weight: 700; padding: 4px 10px; border-radius: 999px; font-size: 12px; }
+    .terminal-switch { display: flex; gap: 8px; margin: 16px auto; max-width: 900px; padding: 0 16px; }
+    .terminal-switch button {
+      flex: 1; padding: 14px; border-radius: 10px; border: 2px solid var(--border);
+      background: #111; color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer;
+    }
+    .terminal-switch button.active { border-color: var(--blue); background: rgba(59,130,246,.15); }
+    main { max-width: 900px; margin: 0 auto; padding: 0 16px 24px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .terminal-title { text-align: center; margin-bottom: 16px; }
+    .terminal-title h1 { margin: 0; font-size: 22px; letter-spacing: 2px; }
+    .terminal-title p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+    h2 { margin: 0 0 12px; font-size: 14px; color: var(--muted); text-transform: uppercase; }
+    #qr-reader { width: 100%; border-radius: 8px; overflow: hidden; min-height: 260px; background: #000; }
+    .result { margin-top: 12px; padding: 14px; border-radius: 8px; font-weight: 700; font-size: 18px; text-align: center; }
+    .granted { background: rgba(34,197,94,.15); color: var(--green); }
+    .denied { background: rgba(239,68,68,.15); color: var(--red); }
+    .meta { font-size: 13px; color: var(--muted); line-height: 1.7; margin-top: 10px; }
+    .pin-display { letter-spacing: 8px; font-size: 24px; text-align: center; padding: 12px; background: #000; border-radius: 8px; margin-bottom: 12px; }
+    .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-width: 260px; margin: 0 auto; }
+    .keypad button { padding: 16px; font-size: 18px; border: 1px solid var(--border); background: #1a1a1a; color: var(--text); border-radius: 8px; cursor: pointer; }
+    .status-row { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; margin: 10px 0; }
+    .dot { width: 14px; height: 14px; border-radius: 50%; }
+    .dot.locked { background: var(--red); } .dot.open { background: var(--green); }
+    .dot.unknown { background: var(--yellow); } .dot.error { background: var(--red); }
+    .post-auth { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
+    .post-auth.disabled { opacity: .4; pointer-events: none; }
+    button.action { margin: 4px 6px 4px 0; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: #1f1f1f; color: var(--text); cursor: pointer; }
+    button.action.primary { background: var(--blue); border-color: var(--blue); }
+    button.action.success { background: rgba(34,197,94,.2); border-color: var(--green); }
+    button.action.warning { background: rgba(234,179,8,.15); border-color: var(--yellow); }
+    .action-hint { font-size: 12px; color: var(--muted); margin: 8px 0 0; line-height: 1.5; }
+    .dev-tools { border: 1px dashed #444; background: #0d0d0d; }
+    .dev-tools summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; }
+    #event-log { height: 220px; overflow-y: auto; font-family: ui-monospace, monospace; font-size: 12px; background: #000; border-radius: 8px; padding: 10px; border: 1px solid var(--border); }
+    .log-line { margin-bottom: 4px; } .log-line .ts { color: var(--muted); }
+    .hidden { display: none !important; }
+    .blocked { padding: 40px; text-align: center; color: var(--red); }
+  </style>
+</head>
+<body>
+  <header>
+    <div><strong>DROPBAGS</strong> — Simulateur terminaux</div>
+    <span class="badge">ENVIRONMENT: TEST</span>
+  </header>
+
+  <div id="blocked-view" class="blocked hidden"></div>
+
+  <div id="app" class="hidden">
+    <div class="terminal-switch">
+      <button id="btn-mode-door" class="active">🚪 PORTE / Contrôle d'accès</button>
+      <button id="btn-mode-locker">🧳 CASIER / Terminal casier</button>
+    </div>
+
+    <main>
+      <section class="panel">
+        <h2>📷 Scanner QR</h2>
+        <p class="meta">Présentez votre QR code devant la caméra</p>
+        <div id="qr-reader"></div>
+        <div style="margin-top:8px">
+          <button class="action" id="btn-start-cam">Démarrer caméra</button>
+          <button class="action" id="btn-stop-cam">Arrêter caméra</button>
+        </div>
+      </section>
+
+      <!-- MODE PORTE -->
+      <section id="panel-door" class="panel">
+        <div class="terminal-title">
+          <h1>DROPBAGS</h1>
+          <p>TERMINAL D'ACCÈS — ENTRÉE</p>
+        </div>
+        <h2>🔢 Entrer PIN</h2>
+        <div class="pin-display" id="pin-display-door">••••</div>
+        <div class="keypad" id="keypad-door"></div>
+        <div id="door-result"></div>
+        <div class="status-row"><span class="dot locked" id="door-dot"></span><span id="door-label">LOCKED</span></div>
+      </section>
+
+      <!-- MODE CASIER -->
+      <section id="panel-locker" class="panel hidden">
+        <div class="terminal-title">
+          <h1>DROPBAGS</h1>
+          <p>TERMINAL CASIER</p>
+        </div>
+        <h2>🔢 Entrer PIN</h2>
+        <div class="pin-display" id="pin-display-locker">••••</div>
+        <div class="keypad" id="keypad-locker"></div>
+        <div id="locker-result"></div>
+        <div class="meta">Casier #<span id="locker-num">—</span> — <span id="locker-label">—</span></div>
+        <div class="meta" id="checkin-meta">Check-in : —</div>
+        <div class="meta" id="checkout-meta">Checkout : —</div>
+
+        <div id="post-auth" class="post-auth disabled">
+          <h2>Après ouverture</h2>
+          <button class="action primary" id="btn-deposit">Simulate bag deposit</button>
+          <button class="action" id="btn-close-locker">Close locker</button>
+          <button class="action success" id="btn-stay">Open &amp; Stay / Continue reservation</button>
+          <button class="action warning" id="btn-leave-checkout">Open &amp; Leave / Checkout</button>
+          <p class="action-hint" id="post-auth-hint">
+            Déposez le bagage, fermez le casier, puis choisissez « Open &amp; Stay » pour rester en réservation active
+            ou « Open &amp; Leave » pour démarrer la récupération (checkout).
+          </p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>📋 Journal des événements</h2>
+        <div id="event-log"></div>
+      </section>
+
+      <details class="panel dev-tools">
+        <summary>⚙️ Outils techniques (développeur)</summary>
+        <div style="margin-top:12px">
+          <button class="action" id="btn-reset">Reset test scenario</button>
+          <button class="action" id="btn-full-sim">Run full simulation</button>
+          <br /><br />
+          <button class="action" data-akuvox="timeout">Simulate Akuvox timeout</button>
+          <button class="action" data-akuvox="error">Simulate Akuvox error</button>
+          <button class="action" data-akuvox="normal">Reset Akuvox</button>
+          <button class="action" data-keynius="timeout">Simulate Keynius timeout</button>
+          <button class="action" data-keynius="error">Simulate Keynius error</button>
+          <button class="action" data-keynius="normal">Reset Keynius</button>
+          <br /><br />
+          <button class="action" id="btn-dev-locker">Open locker (bookingId)</button>
+          <button class="action" id="btn-continue">Continue reservation</button>
+          <button class="action" id="btn-finalize">Checkout finalize</button>
+          <div id="full-sim-log" style="margin-top:12px;font-size:12px"></div>
+          <div class="meta" id="booking-meta" style="margin-top:12px">Aucune réservation chargée</div>
+        </div>
+      </details>
+    </main>
+  </div>
+
+  <script>
+    const state = {
+      config: null,
+      mode: "door",
+      bookingId: null,
+      lockerNumber: null,
+      qrToken: null,
+      pin: null,
+      pinBufferDoor: "",
+      pinBufferLocker: "",
+      lockerAccessGranted: false,
+      checkoutPending: false,
+      checkoutDeadlineAt: null,
+      lastScanToken: null,
+      lastScanAt: 0,
+      scanCooldownMs: 3000,
+      scanner: null
+    };
+
+    function ts() { return new Date().toLocaleTimeString("fr-FR", { hour12: false }); }
+
+    function log(event, detail) {
+      const el = document.getElementById("event-log");
+      const line = document.createElement("div");
+      line.className = "log-line";
+      line.innerHTML = `<span class="ts">${ts()}</span> ${event}${detail ? " — " + detail : ""}`;
+      el.prepend(line);
+    }
+
+    function extractToken(raw) {
+      const text = String(raw || "").trim();
+      try { return new URL(text).searchParams.get("token") || text; } catch { return text; }
+    }
+
+    function maskToken(t) { return !t || t.length < 10 ? "****" : `${t.slice(0,4)}…${t.slice(-4)}`; }
+
+    async function api(path, options = {}) {
+      const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+      if (state.config?.apiKey && options.useApiKey !== false) headers["x-api-key"] = state.config.apiKey;
+      const res = await fetch(path, { ...options, headers });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      document.getElementById("btn-mode-door").classList.toggle("active", mode === "door");
+      document.getElementById("btn-mode-locker").classList.toggle("active", mode === "locker");
+      document.getElementById("panel-door").classList.toggle("hidden", mode !== "door");
+      document.getElementById("panel-locker").classList.toggle("hidden", mode !== "locker");
+      log("TERMINAL_SWITCH", mode === "door" ? "PORTE" : "CASIER");
+    }
+
+    function renderDoorResult(result) {
+      const granted = result.ok && result.data.access === "granted";
+      document.getElementById("door-result").innerHTML = `
+        <div class="result ${granted ? "granted" : "denied"}">${granted ? "ACCESS GRANTED" : "ACCESS DENIED"}</div>
+        <div class="meta">
+          Réservation : ${result.data.bookingId || "—"}<br/>
+          Raison : ${result.data.reason || "—"}<br/>
+          Porte : ${result.data.doorOpened ? "ouverte" : "—"}
+        </div>`;
+      if (granted) {
+        log("ACCESS_GRANTED");
+        log("DOOR_OPENED");
+        if (result.data.bookingId) { state.bookingId = result.data.bookingId; refreshBookingMeta(); }
+      } else {
+        log("ACCESS_DENIED", result.data.reason);
+      }
+    }
+
+    function renderLockerResult(result) {
+      const granted = result.ok && result.data.access === "granted";
+      const identified = result.data.identified || !result.data.lockerOpened;
+      document.getElementById("locker-result").innerHTML = `
+        <div class="result ${granted ? "granted" : "denied"}">${granted ? (identified ? "RÉSERVATION IDENTIFIÉE" : "CASIER OPEN") : "ACCESS DENIED"}</div>
+        <div class="meta">
+          Réservation : ${result.data.bookingId || "—"}<br/>
+          Casier : ${result.data.locker || "—"}<br/>
+          Check-in : ${result.data.checkInTime || "—"}<br/>
+          Raison : ${result.data.reason || result.data.error || "—"}
+        </div>`;
+      if (granted) {
+        log("LOCKER_IDENTIFIED");
+        state.lockerAccessGranted = true;
+        state.lockerNumber = result.data.locker || null;
+        state.bookingId = result.data.bookingId;
+        state.checkoutPending = Boolean(result.data.checkoutPending);
+        state.checkoutDeadlineAt = result.data.checkoutDeadlineAt || null;
+        document.getElementById("post-auth").classList.remove("disabled");
+        updateCheckoutUi();
+        refreshBookingMeta();
+      } else {
+        log("ACCESS_DENIED", result.data.reason || result.data.error);
+        state.lockerAccessGranted = false;
+      }
+      pollHardware();
+    }
+
+    async function requestDoorAccess({ qrToken, pin }) {
+      log("ACCESS_REQUEST", qrToken ? "QR" : "PIN");
+      const body = qrToken ? { qrToken } : { pin };
+      const result = await api("/access/validate", { method: "POST", body: JSON.stringify(body), useApiKey: false });
+      renderDoorResult(result);
+      pollHardware();
+      return result;
+    }
+
+    async function requestLockerAccess({ qrToken, pin }) {
+      log("ACCESS_REQUEST", qrToken ? "QR" : "PIN");
+      const body = qrToken ? { qrToken } : { pin };
+      const result = await api("/api/access/locker", { method: "POST", body: JSON.stringify(body) });
+      renderLockerResult(result);
+      return result;
+    }
+
+    async function onQrDetected(raw) {
+      const token = extractToken(raw);
+      const now = Date.now();
+      if (token === state.lastScanToken && now - state.lastScanAt < state.scanCooldownMs) return;
+      state.lastScanToken = token;
+      state.lastScanAt = now;
+      state.qrToken = token;
+      log("QR_DETECTED", maskToken(token));
+      if (state.mode === "door") await requestDoorAccess({ qrToken: token });
+      else await requestLockerAccess({ qrToken: token });
+    }
+
+    function buildKeypad(containerId, bufferKey, onSubmit) {
+      const keys = ["1","2","3","4","5","6","7","8","9","←","0","✓"];
+      const pad = document.getElementById(containerId);
+      keys.forEach((k) => {
+        const btn = document.createElement("button");
+        btn.textContent = k;
+        btn.onclick = async () => {
+          if (k === "←") state[bufferKey] = state[bufferKey].slice(0, -1);
+          else if (k === "✓") {
+            if (state[bufferKey].length < 4) return;
+            log("PIN_SUBMITTED", "****");
+            await onSubmit(state[bufferKey]);
+            state[bufferKey] = "";
+          } else if (state[bufferKey].length < 6) state[bufferKey] += k;
+          const displayId = containerId === "keypad-door" ? "pin-display-door" : "pin-display-locker";
+          document.getElementById(displayId).textContent = "•".repeat(state[bufferKey].length) || "••••";
+        };
+        pad.appendChild(btn);
+      });
+    }
+
+    function updateCheckoutUi() {
+      const meta = document.getElementById("checkout-meta");
+      const hint = document.getElementById("post-auth-hint");
+      const stayBtn = document.getElementById("btn-stay");
+      const leaveBtn = document.getElementById("btn-leave-checkout");
+
+      if (state.checkoutPending) {
+        const deadline = state.checkoutDeadlineAt
+          ? new Date(state.checkoutDeadlineAt).toLocaleTimeString("fr-FR", { hour12: false })
+          : "—";
+        meta.textContent = `Checkout : actif (deadline ${deadline}) — fermez le casier puis choisissez`;
+        hint.textContent =
+          "Checkout en cours : « Open & Stay » = continuer la réservation (checkInTime conservé). " +
+          "« Open & Leave » = clôturer définitivement (finalize).";
+        stayBtn.textContent = "Open & Stay / Continue reservation";
+        leaveBtn.textContent = "Open & Leave / Finalize checkout";
+      } else {
+        meta.textContent = "Checkout : inactif";
+        hint.textContent =
+          "Scan OK — choisissez « Open & Stay » pour ouvrir et déposer, ou « Open & Leave » pour la récupération (checkout).";
+        stayBtn.textContent = "Open & Stay / Continue reservation";
+        leaveBtn.textContent = "Open & Leave / Checkout";
+      }
+    }
+
+    async function closeLockerMock() {
+      if (!state.lockerNumber) return null;
+      const r = await api("/simulator/api/locker/close", {
+        method: "POST",
+        body: JSON.stringify({ lockerNumber: state.lockerNumber }),
+        useApiKey: false
+      });
+      log("LOCKER_CLOSED", r.data?.status || r.data?.error);
+      pollHardware();
+      return r;
+    }
+
+    async function refreshCheckoutState() {
+      if (!state.bookingId) {
+        state.checkoutPending = false;
+        updateCheckoutUi();
+        return;
+      }
+
+      const { ok, data } = await api(`/api/access/checkout-state/${state.bookingId}`);
+      if (!ok) return;
+
+      state.checkoutPending = Boolean(data.checkoutPending);
+      state.checkoutDeadlineAt = data.checkoutDeadlineAt || null;
+      updateCheckoutUi();
+    }
+
+    async function pollHardware() {
+      const q = state.lockerNumber ? `?lockerNumber=${state.lockerNumber}` : "";
+      const { ok, data } = await api(`/simulator/api/hardware-state${q}`, { useApiKey: false });
+      if (!ok) return;
+      const door = data.door?.state || "UNKNOWN";
+      document.getElementById("door-dot").className = "dot " + door.toLowerCase();
+      document.getElementById("door-label").textContent = door;
+      if (data.locker) document.getElementById("locker-label").textContent = data.locker.status;
+    }
+
+    async function refreshBookingMeta() {
+      if (!state.bookingId) return;
+      const { ok, data } = await api(`/dev/booking/${state.bookingId}`, { useApiKey: false });
+      if (!ok) return;
+      state.lockerNumber = data.lockerNumber;
+      document.getElementById("locker-num").textContent = data.lockerNumber || "—";
+      document.getElementById("checkin-meta").textContent = `Check-in : ${data.checkInTime || "non enregistré"}`;
+      document.getElementById("booking-meta").innerHTML = `
+        ID: ${data.bookingId} | Status: ${data.status}<br/>
+        Casier: ${data.lockerNumber || "—"} | Check-in: ${data.checkInTime || "NULL"}`;
+      await refreshCheckoutState();
+      pollHardware();
+    }
+
+    async function startCamera() {
+      if (state.scanner) return;
+      state.scanner = new Html5Qrcode("qr-reader");
+      try {
+        await state.scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, onQrDetected);
+        log("CAMERA_STARTED");
+      } catch (e) { log("CAMERA_ERROR", e.message); }
+    }
+
+    async function stopCamera() {
+      if (!state.scanner) return;
+      await state.scanner.stop();
+      state.scanner.clear();
+      state.scanner = null;
+      log("CAMERA_STOPPED");
+    }
+
+    async function init() {
+      const cfg = await api("/simulator/api/config", { useApiKey: false });
+      if (!cfg.ok) {
+        document.getElementById("blocked-view").classList.remove("hidden");
+        document.getElementById("blocked-view").textContent = cfg.data.error || "Simulateur indisponible";
+        return;
+      }
+      state.config = cfg.data;
+      document.getElementById("app").classList.remove("hidden");
+      log("SIMULATOR_READY");
+      buildKeypad("keypad-door", "pinBufferDoor", (pin) => requestDoorAccess({ pin }));
+      buildKeypad("keypad-locker", "pinBufferLocker", (pin) => requestLockerAccess({ pin }));
+      updateCheckoutUi();
+      setInterval(pollHardware, 1500);
+      pollHardware();
+    }
+
+    document.getElementById("btn-mode-door").onclick = () => setMode("door");
+    document.getElementById("btn-mode-locker").onclick = () => setMode("locker");
+    document.getElementById("btn-start-cam").onclick = startCamera;
+    document.getElementById("btn-stop-cam").onclick = stopCamera;
+
+    document.getElementById("btn-deposit").onclick = async () => {
+      if (!state.lockerNumber) return;
+      const r = await api("/simulator/api/locker/deposit", { method: "POST", body: JSON.stringify({ lockerNumber: state.lockerNumber }), useApiKey: false });
+      log("BAG_DEPOSITED", r.data.locker?.status);
+      pollHardware();
+    };
+
+    document.getElementById("btn-close-locker").onclick = async () => {
+      await closeLockerMock();
+    };
+
+    document.getElementById("btn-stay").onclick = async () => {
+      if (!state.bookingId) return;
+
+      if (state.checkoutPending) {
+        const r = await api("/api/access/continue", {
+          method: "POST",
+          body: JSON.stringify({ bookingId: state.bookingId })
+        });
+        if (r.ok) {
+          log("CONTINUE_RESERVATION", "active");
+        } else {
+          log("CONTINUE_FAILED", r.data.error || r.data.message);
+          return;
+        }
+        await closeLockerMock();
+      } else {
+        const r = await api("/api/access/stay", {
+          method: "POST",
+          body: JSON.stringify({ bookingId: state.bookingId })
+        });
+        if (!r.ok || r.data.access === "denied") {
+          log("STAY_OPEN_FAILED", r.data.error || r.data.message);
+          return;
+        }
+        log("LOCKER_OPENED", r.data.locker);
+        state.lockerNumber = r.data.locker;
+        if (r.data.checkInRecorded) log("CHECK_IN", r.data.checkInTime);
+        pollHardware();
+      }
+
+      await refreshBookingMeta();
+    };
+
+    document.getElementById("btn-leave-checkout").onclick = async () => {
+      if (!state.bookingId) return;
+
+      if (state.checkoutPending) {
+        const r = await api("/api/access/finalize", {
+          method: "POST",
+          body: JSON.stringify({ bookingId: state.bookingId })
+        });
+        if (r.ok) {
+          log("CHECKOUT_FINALIZED", r.data.booking?.status || "closed");
+          await closeLockerMock();
+          state.lockerAccessGranted = false;
+          state.checkoutPending = false;
+          state.checkoutDeadlineAt = null;
+          document.getElementById("post-auth").classList.add("disabled");
+        } else {
+          log("FINALIZE_FAILED", r.data.error || r.data.message);
+          return;
+        }
+      } else {
+        const r = await api("/api/access/pickup", {
+          method: "POST",
+          body: JSON.stringify({ bookingId: state.bookingId })
+        });
+        if (r.ok) {
+          log("PICKUP_STARTED", r.data.checkoutDeadlineAt || "checkout window");
+          state.checkoutPending = true;
+          state.checkoutDeadlineAt = r.data.checkoutDeadlineAt || null;
+          updateCheckoutUi();
+          pollHardware();
+        } else {
+          log("PICKUP_FAILED", r.data.error || r.data.message);
+          return;
+        }
+      }
+
+      await refreshBookingMeta();
+    };
+
+    document.getElementById("btn-dev-locker").onclick = async () => {
+      if (!state.bookingId) return;
+      const r = await api("/api/access/locker", { method: "POST", body: JSON.stringify({ bookingId: state.bookingId }) });
+      log("DEV_LOCKER_API", JSON.stringify(r.data));
+      refreshBookingMeta();
+    };
+
+    document.getElementById("btn-continue").onclick = async () => {
+      if (!state.bookingId) return;
+      await api("/api/access/continue", { method: "POST", body: JSON.stringify({ bookingId: state.bookingId }) });
+      refreshBookingMeta();
+    };
+
+    document.getElementById("btn-finalize").onclick = async () => {
+      if (!state.bookingId) return;
+      await api("/api/access/finalize", { method: "POST", body: JSON.stringify({ bookingId: state.bookingId }) });
+      state.lockerAccessGranted = false;
+      document.getElementById("post-auth").classList.add("disabled");
+      refreshBookingMeta();
+    };
+
+    document.querySelectorAll("[data-akuvox]").forEach((btn) => {
+      btn.onclick = async () => {
+        await api("/simulator/api/mock/akuvox-mode", { method: "POST", body: JSON.stringify({ mode: btn.dataset.akuvox }), useApiKey: false });
+      };
+    });
+    document.querySelectorAll("[data-keynius]").forEach((btn) => {
+      btn.onclick = async () => {
+        await api("/simulator/api/mock/keynius-mode", { method: "POST", body: JSON.stringify({ mode: btn.dataset.keynius }), useApiKey: false });
+      };
+    });
+
+    document.getElementById("btn-reset").onclick = async () => {
+      await api("/simulator/api/reset", { method: "POST", useApiKey: false });
+      state.bookingId = null;
+      state.lockerNumber = null;
+      state.lockerAccessGranted = false;
+      state.checkoutPending = false;
+      state.checkoutDeadlineAt = null;
+      document.getElementById("post-auth").classList.add("disabled");
+      document.getElementById("checkout-meta").textContent = "Checkout : —";
+      updateCheckoutUi();
+      log("RESET");
+      refreshBookingMeta();
+    };
+
+    document.getElementById("btn-full-sim").onclick = async () => {
+      const el = document.getElementById("full-sim-log");
+      el.innerHTML = "";
+      const step = (n, ok, d) => { el.innerHTML += `<div style="color:${ok?"#22c55e":"#ef4444"}">${ok?"✅":"❌"} ${n}${d?" — "+d:""}</div>`; };
+      let r = await api("/simulator/api/reset", { method: "POST", useApiKey: false }); step("Reset", r.ok);
+      r = await api("/dev/create-booking", { method: "POST", useApiKey: false }); step("Booking", r.ok, r.data.bookingId); state.bookingId = r.data.bookingId;
+      r = await api(`/dev/payment-intent/${state.bookingId}`, { method: "POST", useApiKey: false }); step("Payment", r.ok);
+      r = await api(`/dev/authorize/${state.bookingId}`, { method: "POST", useApiKey: false }); step("Authorize", r.ok); state.qrToken = r.data.booking?.qrToken;
+      if (state.qrToken) { r = await requestDoorAccess({ qrToken: state.qrToken }); step("Door QR (no check-in)", r.ok); }
+      r = await api(`/dev/booking/${state.bookingId}`, { useApiKey: false }); step("checkIn after door", !r.data.checkInTime, r.data.checkInTime || "NULL");
+      if (state.qrToken) { r = await requestLockerAccess({ qrToken: state.qrToken }); step("Locker QR + check-in", r.ok, r.data.checkInTime); }
+      refreshBookingMeta();
+    };
+
+    init();
+  </script>
+</body>
+</html>

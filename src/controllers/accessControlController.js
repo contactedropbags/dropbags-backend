@@ -1,27 +1,53 @@
 const accessControlService = require("../services/accessControl/accessControlService");
+const accessLogService = require("../services/accessLogService");
 
-async function validateAccess(req, res) {
+function resolveCredentials(body) {
+  const { qrToken, pin, token } = body;
+  return {
+    qrToken: qrToken || token || null,
+    pin: pin || null
+  };
+}
+
+function mapReasonToStatusCode(reason) {
+  if (reason === "BOOKING_NOT_FOUND") return 404;
+
+  if (
+    reason === "BOOKING_EXPIRED" ||
+    reason === "BOOKING_CLOSED" ||
+    reason === "BOOKING_NOT_AUTHORIZED" ||
+    reason === "BOOKING_NOT_PAID" ||
+    reason === "INVALID_PIN"
+  ) {
+    return 403;
+  }
+
+  return 400;
+}
+
+async function logAndRespond(req, res, source) {
+  const credentials = resolveCredentials(req.body);
+  const method = accessLogService.resolveMethod(credentials);
+
+  console.log(`[AccessControl] POST ${source}`, {
+    hasQrToken: Boolean(credentials.qrToken),
+    hasPin: Boolean(credentials.pin)
+  });
+
   try {
-    const { qrToken, pin, token } = req.body;
-    const resolvedToken = qrToken || token;
+    const result = await accessControlService.validateAndOpenDoor(credentials);
 
-    console.log("[AccessControl] POST /access/validate", {
-      hasQrToken: Boolean(resolvedToken),
-      hasPin: Boolean(pin)
-    });
-
-    const result = await accessControlService.validateAndOpenDoor({
-      qrToken: resolvedToken,
-      pin
+    await accessLogService.logAccessAttempt({
+      bookingId: result.bookingId || result.booking?.id || null,
+      method,
+      allowed: result.allowed,
+      reason: result.reason || null,
+      doorOpened: Boolean(result.doorOpened),
+      source
     });
 
     if (!result.allowed) {
-      const statusCode =
-        result.reason === "BOOKING_NOT_FOUND" ? 404 :
-        result.reason === "BOOKING_EXPIRED" || result.reason === "BOOKING_NOT_AUTHORIZED" ? 403 :
-        400;
-
-      return res.status(statusCode).json({
+      return res.status(mapReasonToStatusCode(result.reason)).json({
         access: "denied",
         reason: result.reason,
         bookingId: result.bookingId || null
@@ -35,7 +61,17 @@ async function validateAccess(req, res) {
       provider: result.provider
     });
   } catch (error) {
-    console.error("[AccessControl] validate error:", error);
+    console.error("[AccessControl] door access error:", error);
+
+    await accessLogService.logAccessAttempt({
+      bookingId: null,
+      method,
+      allowed: false,
+      reason: "SERVER_ERROR",
+      doorOpened: false,
+      source
+    });
+
     return res.status(500).json({
       access: "denied",
       reason: "SERVER_ERROR"
@@ -43,4 +79,12 @@ async function validateAccess(req, res) {
   }
 }
 
-module.exports = { validateAccess };
+async function validateAccess(req, res) {
+  return logAndRespond(req, res, "access/validate");
+}
+
+async function openDoor(req, res) {
+  return logAndRespond(req, res, "api/access/open");
+}
+
+module.exports = { validateAccess, openDoor };

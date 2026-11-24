@@ -5,7 +5,16 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "dev": "NODE_ENV=development nodemon src/server.js",
+    "reset": "NODE_ENV=development node scripts/dev/reset.js",
+    "booking": "NODE_ENV=development node scripts/dev/booking.js",
+    "payment": "NODE_ENV=development node scripts/dev/payment.js",
+    "webhook": "NODE_ENV=development node scripts/dev/simulate-webhook.js",
+    "pickup": "NODE_ENV=development node scripts/dev/pickup.js",
+    "continue": "NODE_ENV=development node scripts/dev/continue.js",
+    "finalize": "NODE_ENV=development node scripts/dev/finalize.js",
+    "flow": "NODE_ENV=development node scripts/dev/flow.js",
+    "simulator": "open http://localhost:3000/simulator || true",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

@@ -7,6 +7,41 @@ const GRACE_PERIOD = 15 * 60 * 1000;
 const PRICE_PER_HOUR = 3;
 const MAX_PRICE = 15;
 const LOCKER_TIMEOUT = 5 * 60 * 1000;
+const CHECKOUT_DECISION_TIMEOUT_MS = Number(
+  process.env.CHECKOUT_DECISION_TIMEOUT_MS || 180000
+);
+
+/**
+ * Supabase columns for checkout workflow (run manually if missing):
+ *
+ * alter table bookings add column if not exists checkout_started_at timestamptz;
+ * alter table bookings add column if not exists checkout_deadline_at timestamptz;
+ * alter table bookings add column if not exists checkout_decision text;
+ *
+ * create index if not exists idx_bookings_checkout_deadline
+ *   on bookings (checkout_deadline_at)
+ *   where checkout_deadline_at is not null and status = 'active';
+ */
+
+function getCheckoutStartedAt(booking) {
+  return booking.checkout_started_at || booking.checkoutStartedAt || null;
+}
+
+function getCheckoutDeadlineAt(booking) {
+  return booking.checkout_deadline_at || booking.checkoutDeadlineAt || null;
+}
+
+function buildCheckoutWindow() {
+  const startedAt = new Date();
+  const deadlineAt = new Date(
+    startedAt.getTime() + CHECKOUT_DECISION_TIMEOUT_MS
+  );
+
+  return {
+    checkout_started_at: startedAt.toISOString(),
+    checkout_deadline_at: deadlineAt.toISOString()
+  };
+}
 
 const { generateQrToken, uploadQRCodeImage } = require("./qrService");
 const { generatePin } = require("./pinService");
@@ -272,10 +307,64 @@ async function verifyBookingByPin(pin) {
   return { valid: true, booking };
 }
 
+async function recordCheckInIfFirst(bookingId) {
+  const booking = await findBookingById(bookingId);
+  const existing = booking?.checkInTime || booking?.check_in_time;
 
-  // SCAN QR → OPEN LOCKER
-async function scanBooking(bookingId) {
+  if (existing) {
+    return { checkInRecorded: false, checkInTime: existing };
+  }
 
+  const checkInTime = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("bookings")
+    .update({ checkInTime })
+    .eq("id", bookingId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error("[checkIn] persist failed:", error.message);
+    return { checkInRecorded: false, error: error.message };
+  }
+
+  console.log("[checkIn] recorded", { bookingId, checkInTime });
+
+  return {
+    checkInRecorded: true,
+    checkInTime: data.checkInTime || data.check_in_time || checkInTime
+  };
+}
+
+async function getLockerTerminalState(bookingId) {
+  const booking = await findBookingById(bookingId);
+
+  if (!booking) {
+    return { error: "Booking not found" };
+  }
+
+  const checkoutStartedAt = getCheckoutStartedAt(booking);
+  const checkoutDeadlineAt = getCheckoutDeadlineAt(booking);
+  const checkoutPending = Boolean(checkoutStartedAt);
+
+  return {
+    access: "granted",
+    identified: true,
+    lockerOpened: false,
+    bookingId: booking.id,
+    status: booking.status,
+    locker: booking.locker_number || null,
+    checkInTime: booking.checkInTime || booking.check_in_time || null,
+    checkoutPending,
+    checkoutStartedAt,
+    checkoutDeadlineAt,
+    actions: checkoutPending ? ["continue", "finalize"] : ["stay", "leave"]
+  };
+}
+
+// Open locker for deposit / stay — assign if needed, preserve existing checkInTime
+async function openLockerForStay(bookingId) {
   const { data: booking } = await supabase
     .from("bookings")
     .select("*")
@@ -290,13 +379,35 @@ async function scanBooking(bookingId) {
     return { error: "Booking expired" };
   }
 
+  if (booking.locker_number && booking.status === "active") {
+    const openResult = await keyniusService.openLocker(booking.locker_number);
+
+    if (!openResult.success) {
+      return {
+        access: "denied",
+        error: "LOCKER_OPEN_FAILED",
+        warning: "Locker already assigned but hardware open failed",
+        locker: booking.locker_number
+      };
+    }
+
+    const checkIn = await recordCheckInIfFirst(bookingId);
+
+    return {
+      success: true,
+      access: "granted",
+      lockerOpened: true,
+      locker: booking.locker_number,
+      ...checkIn
+    };
+  }
+
   const locker = lockerService.assignLocker();
 
   if (!locker) {
     return { error: "No locker available" };
   }
 
-  // ON MET À JOUR LA DB AVANT LE HARDWARE
   await supabase
     .from("bookings")
     .update({
@@ -305,50 +416,281 @@ async function scanBooking(bookingId) {
     })
     .eq("id", bookingId);
 
-  // ensuite on essaye d'ouvrir
   const openResult = await keyniusService.openLocker(locker);
 
   if (!openResult.success) {
     return {
+      access: "denied",
+      error: "LOCKER_OPEN_FAILED",
       warning: "Locker assigned but hardware open failed",
       locker
     };
   }
 
+  const checkIn = await recordCheckInIfFirst(bookingId);
+
   return {
     success: true,
-    locker
+    access: "granted",
+    lockerOpened: true,
+    locker,
+    ...checkIn
   };
 }
 
-
-// CLOSE LOCKER / PAYMENT
-async function closeLocker(booking) {
-
-  const checkInTime = new Date(booking.checkInTime);
-  const checkOutTime = new Date();
-
-  const duration = checkOutTime - checkInTime;
-  const billableDuration = Math.max(0, duration - GRACE_PERIOD);
-
-  const hours = Math.ceil(billableDuration / (60 * 60 * 1000));
-
-  const price = Math.min(hours * PRICE_PER_HOUR, MAX_PRICE);
-  const amountInCents = price * 100;
-
-  await capturePayment(booking.payment_intent_id || booking.paymentIntentId, amountInCents);
-
-  booking.status = "closed";
-  booking.checkOutTime = checkOutTime;
-  booking.price = price;
-
-  return booking;
+// Dev shortcut — opens locker immediately (not used by locker terminal QR scan)
+async function scanBooking(bookingId) {
+  return openLockerForStay(bookingId);
 }
 
 
-// PICKUP BAG
-async function pickupBooking(bookingId) {
+// CLOSE LOCKER / PAYMENT — unique definitive checkout (Stripe + invalidate + release)
+async function closeLocker(bookingInput, options = {}) {
+  const bookingId = bookingInput?.id;
+  const checkoutDecision = options.checkoutDecision || "finalized";
 
+  if (!bookingId) {
+    throw new Error("Booking id is required");
+  }
+
+  const booking = await findBookingById(bookingId);
+
+  if (!booking) {
+    throw new Error("Booking not found");
+  }
+
+  const paymentCapturedAt =
+    booking.paymentCapturedAt || booking.payment_captured_at;
+
+  if (booking.status === "closed" && paymentCapturedAt) {
+    return booking;
+  }
+
+  const CLOSABLE_STATUSES = new Set(["active"]);
+
+  if (!CLOSABLE_STATUSES.has(booking.status)) {
+    throw new Error(`Booking cannot be closed (status: ${booking.status})`);
+  }
+
+  const checkInRaw = booking.checkInTime || booking.check_in_time;
+
+  if (!checkInRaw) {
+    throw new Error("checkInTime is required to close booking");
+  }
+
+  const paymentIntentId =
+    booking.payment_intent_id || booking.paymentIntentId;
+
+  if (!paymentIntentId) {
+    throw new Error("payment_intent_id is required");
+  }
+
+  const checkInTime = new Date(checkInRaw);
+
+  if (Number.isNaN(checkInTime.getTime())) {
+    throw new Error("checkInTime is invalid");
+  }
+
+  const lockerNumber = booking.locker_number;
+  const checkOutTime = new Date();
+  const duration = checkOutTime.getTime() - checkInTime.getTime();
+  const billableDuration = Math.max(0, duration - GRACE_PERIOD);
+  const hours = Math.ceil(billableDuration / (60 * 60 * 1000));
+  const price = Math.min(Math.max(hours, 0) * PRICE_PER_HOUR, MAX_PRICE);
+  const amountInCents = price * 100;
+
+  const closePayload = {
+    status: "closed",
+    checkOutTime: checkOutTime.toISOString(),
+    duration,
+    price,
+    qrToken: null,
+    pin: null,
+    locker_number: null,
+    checkout_started_at: null,
+    checkout_deadline_at: null,
+    checkout_decision: checkoutDecision
+  };
+
+  const { data: closedBooking, error: closeError } = await supabase
+    .from("bookings")
+    .update(closePayload)
+    .eq("id", bookingId)
+    .eq("status", "active")
+    .select()
+    .single();
+
+  if (closeError || !closedBooking) {
+    throw new Error(closeError?.message || "Booking close update failed");
+  }
+
+  let stripePayment;
+
+  try {
+    stripePayment = await capturePayment(paymentIntentId, amountInCents);
+  } catch (stripeError) {
+    const { error: rollbackError } = await supabase
+      .from("bookings")
+      .update({
+        status: booking.status,
+        checkOutTime: booking.checkOutTime || booking.check_out_time || null,
+        duration: booking.duration ?? null,
+        price: booking.price ?? null,
+        qrToken: booking.qrToken,
+        pin: booking.pin,
+        locker_number: booking.locker_number,
+        checkout_started_at: getCheckoutStartedAt(booking),
+        checkout_deadline_at: getCheckoutDeadlineAt(booking),
+        checkout_decision: booking.checkout_decision || booking.checkoutDecision || null
+      })
+      .eq("id", bookingId);
+
+    if (rollbackError) {
+      console.error("[closeLocker] rollback failed:", rollbackError.message);
+    }
+
+    throw stripeError;
+  }
+
+  const capturedAt = new Date().toISOString();
+
+  const { data: finalBooking, error: capturePersistError } = await supabase
+    .from("bookings")
+    .update({ paymentCapturedAt: capturedAt })
+    .eq("id", bookingId)
+    .eq("status", "closed")
+    .select()
+    .single();
+
+  if (capturePersistError || !finalBooking) {
+    console.error(
+      "[closeLocker] payment captured but Supabase persist failed:",
+      capturePersistError?.message
+    );
+
+    throw new Error(
+      capturePersistError?.message ||
+        "Payment captured but paymentCapturedAt persist failed"
+    );
+  }
+
+  if (lockerNumber) {
+    lockerService.releaseLocker(lockerNumber);
+  }
+
+  console.log("[closeLocker] booking closed", {
+    bookingId: finalBooking.id,
+    duration,
+    price,
+    amountInCents,
+    checkoutDecision,
+    stripePaymentId: stripePayment?.id
+  });
+
+  return finalBooking;
+}
+
+async function finalizeCheckout(bookingId, checkoutDecision = "finalized") {
+  const booking = await findBookingById(bookingId);
+
+  if (!booking) {
+    throw new Error("Booking not found");
+  }
+
+  if (booking.status !== "active") {
+    throw new Error(`Booking cannot be finalized (status: ${booking.status})`);
+  }
+
+  return closeLocker({ id: bookingId }, { checkoutDecision });
+}
+
+async function continueReservation(bookingId) {
+  const now = new Date().toISOString();
+
+  const { data: booking, error } = await supabase
+    .from("bookings")
+    .update({
+      checkout_started_at: null,
+      checkout_deadline_at: null,
+      checkout_decision: "continued"
+    })
+    .eq("id", bookingId)
+    .eq("status", "active")
+    .not("checkout_started_at", "is", null)
+    .gt("checkout_deadline_at", now)
+    .select()
+    .single();
+
+  if (error || !booking) {
+    return { error: "Cannot continue reservation" };
+  }
+
+  return {
+    success: true,
+    booking
+  };
+}
+
+async function getCheckoutState(bookingId) {
+  const booking = await findBookingById(bookingId);
+
+  if (!booking) {
+    return { error: "Booking not found" };
+  }
+
+  const checkoutStartedAt = getCheckoutStartedAt(booking);
+  const checkoutDeadlineAt = getCheckoutDeadlineAt(booking);
+  const checkoutPending = Boolean(checkoutStartedAt);
+
+  return {
+    bookingId: booking.id,
+    status: booking.status,
+    checkoutPending,
+    checkoutStartedAt,
+    checkoutDeadlineAt,
+    lockerNumber: booking.locker_number,
+    actions: checkoutPending ? ["continue", "finalize"] : []
+  };
+}
+
+async function processExpiredCheckouts() {
+  const now = new Date().toISOString();
+
+  const { data: expiredBookings, error } = await supabase
+    .from("bookings")
+    .select("id")
+    .eq("status", "active")
+    .not("checkout_deadline_at", "is", null)
+    .lt("checkout_deadline_at", now);
+
+  if (error) {
+    throw new Error(`Expired checkout lookup failed: ${error.message}`);
+  }
+
+  if (!expiredBookings?.length) {
+    return { processed: 0 };
+  }
+
+  let processed = 0;
+
+  for (const row of expiredBookings) {
+    try {
+      await finalizeCheckout(row.id, "auto_finalized");
+      processed += 1;
+    } catch (err) {
+      console.error("[processExpiredCheckouts] failed:", row.id, err.message);
+    }
+  }
+
+  if (processed > 0) {
+    console.log("[processExpiredCheckouts] auto-closed bookings:", processed);
+  }
+
+  return { processed };
+}
+
+// PICKUP BAG — open locker for retrieval, start checkout decision window
+async function pickupBooking(bookingId) {
   const { data: booking } = await supabase
     .from("bookings")
     .select("*")
@@ -359,33 +701,44 @@ async function pickupBooking(bookingId) {
     return { error: "Booking not found" };
   }
 
-  // sécurité : vérifier qu'un casier est bien assigné
+  if (booking.status !== "active") {
+    return { error: "Booking is not active" };
+  }
+
   if (!booking.locker_number) {
     return { error: "No locker assigned to this booking" };
   }
 
-  // ouvrir le casier pour récupérer le bagage
   const openResult = await keyniusService.openLocker(booking.locker_number);
 
   if (!openResult.success) {
     return { error: "Impossible d'ouvrir le locker" };
   }
 
-  // libérer le casier dans le système
-  lockerService.releaseLocker(booking.locker_number);
+  const checkoutWindow = buildCheckoutWindow();
 
-  // mettre à jour le booking dans Supabase
-  await supabase
+  const { data: updatedBooking, error: updateError } = await supabase
     .from("bookings")
     .update({
-      status: "completed"
+      ...checkoutWindow,
+      checkout_decision: null
     })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .eq("status", "active")
+    .select()
+    .single();
+
+  if (updateError || !updatedBooking) {
+    return { error: "Unable to start checkout window" };
+  }
 
   return {
     success: true,
-    message: "Locker opened and released",
-    locker: booking.locker_number
+    message: "Locker opened — choose continue or finalize",
+    locker: booking.locker_number,
+    checkoutStartedAt: checkoutWindow.checkout_started_at,
+    checkoutDeadlineAt: checkoutWindow.checkout_deadline_at,
+    actions: ["continue", "finalize"]
   };
 }
 
@@ -400,7 +753,13 @@ module.exports = {
   markBookingPaidAndSendAccess,
   markBookingCaptured,
   verifyBookingByPin,
+  getLockerTerminalState,
+  openLockerForStay,
   scanBooking,
   closeLocker,
-  pickupBooking
+  pickupBooking,
+  continueReservation,
+  finalizeCheckout,
+  getCheckoutState,
+  processExpiredCheckouts
 };

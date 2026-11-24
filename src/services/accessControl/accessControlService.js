@@ -4,7 +4,8 @@ const {
 } = require("../bookingService");
 
 const providers = {
-  akuvox: () => require("./providers/akuvoxProvider")
+  akuvox: () => require("./providers/akuvoxProvider"),
+  mock: () => require("./providers/mockProvider")
 };
 
 function getProviderName() {
@@ -28,8 +29,22 @@ function isBookingExpired(booking) {
   return new Date(bookingExpiry) < new Date();
 }
 
+const CLOSED_STATUSES = new Set(["closed", "completed", "paid"]);
+
 function isAccessAllowedStatus(status) {
   return status === "authorized" || status === "active";
+}
+
+function getAccessDenialReason(status) {
+  if (CLOSED_STATUSES.has(status)) {
+    return "BOOKING_CLOSED";
+  }
+
+  if (status === "pending") {
+    return "BOOKING_NOT_PAID";
+  }
+
+  return "BOOKING_NOT_AUTHORIZED";
 }
 
 async function resolveBooking({ qrToken, pin }) {
@@ -69,8 +84,9 @@ async function validateAccess({ qrToken, pin }) {
   });
 
   if (!isAccessAllowedStatus(booking.status)) {
-    console.log("[AccessControl] invalid status", { status: booking.status });
-    return { allowed: false, reason: "BOOKING_NOT_AUTHORIZED", bookingId: booking.id };
+    const reason = getAccessDenialReason(booking.status);
+    console.log("[AccessControl] invalid status", { status: booking.status, reason });
+    return { allowed: false, reason, bookingId: booking.id };
   }
 
   if (isBookingExpired(booking)) {

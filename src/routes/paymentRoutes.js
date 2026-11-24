@@ -37,6 +37,11 @@ router.post("/intent", async (req, res) => {
     const paymentIntent = await createPaymentIntent(email || booking.email, bookingId);
     await linkPaymentIntentToBooking(bookingId, paymentIntent.id);
 
+    console.log("[DIAG] PaymentIntent linked", {
+      bookingId,
+      paymentIntentId: paymentIntent.id
+    });
+
     res.json({
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id

@@ -14,6 +14,9 @@ const accessControlRoutes = require("./routes/accessControlRoutes");
 
 // Middleware de sécurité (API key)
 const authMiddleware = require("./middleware/auth");
+const { processExpiredCheckouts } = require("./services/bookingService");
+
+const CHECKOUT_POLL_MS = 30000;
 
 // Initialisation de l'app
 const app = express();
@@ -89,6 +92,19 @@ app.use("/api/access", authMiddleware, accessRoutes);
 
 /**
  * ================================
+ * 🧪 ROUTES DEV (development only)
+ * ================================
+ */
+if (process.env.NODE_ENV === "development") {
+  const devRoutes = require("./routes/devRoutes");
+  app.use("/dev", devRoutes);
+
+  const simulatorRoutes = require("./routes/simulatorRoutes");
+  app.use("/simulator", simulatorRoutes);
+}
+
+/**
+ * ================================
  * 📄 ROUTE FRONT (QR CODE ACCESS)
  * ================================
  * Page HTML pour afficher QR + instructions
@@ -141,7 +157,31 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log("Stripe webhook endpoints: POST /webhooks/stripe | POST /webhook");
-  console.log("Access control endpoint: POST /access/validate");
+  console.log("Access control endpoints: POST /access/validate | POST /api/access/open");
+  console.log("Checkout endpoints: POST /api/access/pickup | /continue | /finalize | GET /checkout-state/:bookingId");
+  console.log("CHECKOUT_DECISION_TIMEOUT_MS:", process.env.CHECKOUT_DECISION_TIMEOUT_MS || 180000);
   console.log("STRIPE_WEBHOOK_SECRET loaded:", Boolean(process.env.STRIPE_WEBHOOK_SECRET));
-  console.log("ACCESS_CONTROL_PROVIDER:", process.env.ACCESS_CONTROL_PROVIDER || "akuvox");
+  const accessProvider = process.env.ACCESS_CONTROL_PROVIDER || "akuvox";
+  const keyniusProvider = process.env.KEYNIUS_PROVIDER || "api";
+  console.log("ACCESS_CONTROL_PROVIDER:", accessProvider);
+  console.log("KEYNIUS_PROVIDER:", keyniusProvider);
+  if (accessProvider === "mock") {
+    console.log("Access control running in MOCK mode (no Akuvox HTTP calls)");
+  }
+  if (keyniusProvider === "mock") {
+    console.log("Keynius running in MOCK mode (no Keynius HTTP calls)");
+  }
+
+  if (process.env.NODE_ENV === "development") {
+    console.log("Dev routes enabled: POST /dev/reset | /dev/create-booking | /dev/authorize/:id | /dev/activate/:id | …");
+    console.log("Access Control Simulator: http://localhost:" + PORT + "/simulator");
+  }
+
+  setInterval(async () => {
+    try {
+      await processExpiredCheckouts();
+    } catch (error) {
+      console.error("[checkout] processExpiredCheckouts failed:", error.message);
+    }
+  }, CHECKOUT_POLL_MS);
 });
